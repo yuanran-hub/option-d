@@ -2,7 +2,6 @@ import AppKit
 import Carbon
 import NaturalLanguage
 
-let pythonPath = "/usr/bin/python3"
 let backendPath = Bundle.main.resourceURL!.appendingPathComponent("runtime/backend.py").path
 
 final class ReadingTextView: NSTextView {
@@ -77,8 +76,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
     }()
 
     func startWorker() {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: pythonPath)
+        let process = pythonProcess(resources: Bundle.main.resourceURL!)
         var arguments = ["-B", backendPath, "--serve"]
         if let testRoot = ProcessInfo.processInfo.environment["IELTS_LOOKUP_TEST_ROOT"] {
             arguments += ["--root", testRoot]
@@ -665,8 +663,13 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
     func windowWillClose(_ notification: Notification) { closePanel() }
 }
 
-let application = NSApplication.shared
-let provider = LookupProvider()
-application.delegate = provider
-application.setActivationPolicy(.accessory)
-application.run()
+@main
+enum OptionDApp {
+    static func main() {
+        let application = NSApplication.shared
+        let provider = LookupProvider()
+        application.delegate = provider
+        application.setActivationPolicy(.accessory)
+        withExtendedLifetime(provider) { application.run() }
+    }
+}

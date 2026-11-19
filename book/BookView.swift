@@ -553,10 +553,10 @@ struct BookView: View {
 
 enum BookTools {
     static func run(_ script: String, _ arguments: [String]) throws -> Data {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        task.arguments = ["-B", Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("Resources/runtime/book/" + script).path] + arguments
+        let resources = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Resources")
+        let task = pythonProcess(resources: resources)
+        task.arguments = ["-B", resources.appendingPathComponent("runtime/book/" + script).path] + arguments
         let output = Pipe()
         task.standardOutput = output
         task.standardError = output

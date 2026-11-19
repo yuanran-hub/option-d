@@ -2,6 +2,14 @@
 
 复制英文，按 **⌥D**。复制单个词会直接显示中文释义和音标；复制一句话，可以在毛玻璃浮窗里点选想查的词。按 **Esc** 收起浮窗，回到阅读。
 
+## 下载使用
+
+[下载 Option D for Mac](https://github.com/yuanran-hub/option-d/releases/latest/download/Option-D.dmg) · [查看发布记录](https://github.com/yuanran-hub/option-d/releases)
+
+适用于 macOS 26 或更新版本，支持 Apple 芯片和 Intel。打开下载的磁盘映像，把 **Option D** 拖到「应用程序」，再从「应用程序」双击打开。看到菜单栏的「词」后，复制一个英文单词，按 **Option + D** 即可查词。词典和运行所需组件已随 App 附带。
+
+公开下载版尚未经过 Apple 公证。如果首次打开时系统提示无法验证开发者，请先确认文件是从本仓库下载的，再到「系统设置 → 隐私与安全性」找到 Option D，点「仍要打开」。[Apple 官方说明](https://support.apple.com/zh-cn/102445)
+
 ![在原句中查看 policies 的释义](assets/lookup.png)
 
 ## 在 Mac 上构建
@@ -14,6 +22,8 @@ cd option-d
 bash build.sh
 open "build/Option D.app"
 ```
+
+制作可分发的通用安装包可运行 `bash build.sh --dmg`，生成的文件在 `build/Option-D.dmg`。
 
 生成的 App 可以移到「应用程序」。启动后，菜单栏会出现「词」。如果日常使用，可以将 App 加入 macOS 的登录项。
 
