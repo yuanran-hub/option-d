@@ -14,6 +14,45 @@ from docx import Document
 
 
 class LookupAcceptance(unittest.TestCase):
+    def test_phrase_discovery_matches_whole_words_and_dictionary_inflections(self):
+        from phrase_lookup import recognize
+        db = backend.DATA / "dictionary.sqlite"
+        for text in ["He finally spilled the beans about the surprise party.",
+                     "😃 She spills the beans again.", "They spilt the beans."]:
+            scan = recognize(text, db)
+            self.assertFalse(scan["exact"])
+            self.assertIn("spill the beans", [m["lemma"] for m in scan["choices"]])
+        self.assertTrue(recognize("“out of the blue!”", db)["exact"])
+        self.assertFalse(recognize("123 out of the blue", db)["exact"])
+        for text in ["spill. The beans", "spilled 2 the beans", "spilled the beansprouts"]:
+            self.assertNotIn("spill the beans", [m["lemma"] for m in recognize(text, db)["choices"]])
+
+    def test_phrase_collection_preserves_distinct_contexts_and_deduplicates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = "He finally spilled the beans about the surprise party."
+            second = "She always spills the\nbeans."
+            for term, sentence in [("spilled the beans", first), ("spills the beans", second),
+                                   ("spilled the beans", first)]:
+                self.assertTrue(backend.collect(term, root, context=sentence)["document_updated"])
+            entry, = json.loads((root / "Reading/查词自动收录.json").read_text())["entries"]
+            self.assertEqual(entry["lemma"], "spill the beans")
+            self.assertIn("说漏嘴", entry["translation"])
+            self.assertEqual({c["text"] for c in entry["contexts"]}, {first, second})
+            self.assertEqual(entry["forms"], ["spilled the beans", "spills the beans"])
+            self.assertFalse(backend.dictionary_lookup("read the room")["found"])
+
+    def test_scanning_alone_creates_no_files(self):
+        import subprocess, sys
+        with tempfile.TemporaryDirectory() as tmp:
+            req = {"action": "scan", "id": "suggest", "text": "He broke the ice."}
+            output = subprocess.check_output([sys.executable, backend.__file__, "--root", tmp, "--serve"],
+                                             input=json.dumps(req) + "\n", text=True, timeout=10)
+            result = json.loads(output)
+            self.assertEqual(result["event"], "phrases")
+            self.assertIn({"first": 1, "last": 3, "lemma": "break the ice"}, result["choices"])
+            self.assertFalse(list(Path(tmp).iterdir()))
+
     def test_delete_updates_exports_and_stale_lookup_cannot_reinsert_word(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

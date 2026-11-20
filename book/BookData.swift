@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import CryptoKit
 
 struct WordContext: Decodable {
     let text: String
@@ -33,7 +34,7 @@ struct Passage: Identifiable {
 }
 
 enum BookOrder: String, CaseIterable, Identifiable {
-    case newest, oldest, ascending, descending
+    case newest, oldest, ascending, descending, random
     var id: Self { self }
     var title: String {
         switch self {
@@ -41,10 +42,20 @@ enum BookOrder: String, CaseIterable, Identifiable {
         case .oldest: return "收录时间 · 旧到新"
         case .ascending: return "字母 · A 到 Z"
         case .descending: return "字母 · Z 到 A"
+        case .random: return "随机顺序"
         }
     }
 
-    func precedes(_ a: String, _ b: String, addedA: String, addedB: String) -> Bool {
+    func arrange<Item: Identifiable>(_ items: [Item], matching: (Item) -> Bool, added: (Item) -> String,
+                                     shuffle: BookShuffle, newRound: Bool) -> [Item] where Item.ID == String {
+        let visible = items.filter(matching)
+        if self == .random {
+            return shuffle.arrange(all: items.map(\.id), visible: visible, newRound: newRound)
+        }
+        return visible.sorted { precedes($0.id, $1.id, addedA: added($0), addedB: added($1)) }
+    }
+
+    private func precedes(_ a: String, _ b: String, addedA: String, addedB: String) -> Bool {
         if addedA != addedB {
             if self == .newest { return addedA > addedB }
             if self == .oldest { return addedA < addedB }
@@ -52,6 +63,48 @@ enum BookOrder: String, CaseIterable, Identifiable {
         let order = a.localizedStandardCompare(b)
         if order == .orderedSame { return self == .descending ? a > b : a < b }
         return self == .descending ? order == .orderedDescending : order == .orderedAscending
+    }
+}
+
+// The deck lives for one reader window. Only its first card's fingerprint survives a relaunch.
+final class BookShuffle {
+    private var ids: [String] = []
+    private let defaults: UserDefaults
+    private let firstKey: String
+
+    init(_ key: String, defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        firstKey = "readingBookShuffleFirst." + key
+    }
+
+    private func fingerprint(_ id: String) -> String {
+        Data(SHA256.hash(data: Data(id.utf8))).base64EncodedString()
+    }
+
+    func arrange<Item: Identifiable>(all: [String], visible: [Item], newRound: Bool) -> [Item] where Item.ID == String {
+        let byID = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
+        if newRound || ids.isEmpty {
+            let previous = ids.first(where: { byID[$0] != nil }).map(fingerprint) ?? defaults.string(forKey: firstKey)
+            ids = all.shuffled()
+            let positions = ids.indices.filter { byID[ids[$0]] != nil }
+            if positions.count > 1, let first = positions.first, fingerprint(ids[first]) == previous,
+               let replacement = positions.dropFirst().randomElement() {
+                // Uniformly choose another visible first card, including when a search is active.
+                ids.swapAt(first, replacement)
+            }
+        } else {
+            let current = Set(all)
+            ids.removeAll { !current.contains($0) }
+            let known = Set(ids)
+            for id in all where !known.contains(id) {
+                ids.insert(id, at: Int.random(in: 0...ids.count))
+            }
+        }
+        if let first = ids.first {
+            let value = fingerprint(first)
+            if defaults.string(forKey: firstKey) != value { defaults.set(value, forKey: firstKey) }
+        }
+        return ids.compactMap { byID[$0] }
     }
 }
 
@@ -93,21 +146,6 @@ struct BookIndex {
             passageText[p.id] = Self.searchText(([p.text] + related).joined(separator: "\n"))
         }
     }
-
-    func wordIDs(matching query: String, order: BookOrder) -> [String] {
-        let q = Self.searchText(query)
-        return words.filter { q.isEmpty || wordText[$0.id]?.contains(q) == true }.sorted {
-            order.precedes($0.id, $1.id, addedA: $0.first_seen ?? $0.last_seen ?? "", addedB: $1.first_seen ?? $1.last_seen ?? "")
-        }.map(\.id)
-    }
-
-    func passages(matching query: String, order: BookOrder) -> [Passage] {
-        let q = Self.searchText(query)
-        return passages.filter { q.isEmpty || passageText[$0.id]?.contains(q) == true }.sorted {
-            order.precedes($0.text, $1.text, addedA: $0.added, addedB: $1.added)
-        }
-    }
-
 }
 
 struct BookLocation {

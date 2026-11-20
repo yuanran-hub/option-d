@@ -22,14 +22,33 @@ func markedText(_ text: String, forms: [String: [String]], selected: String?, li
     if let selected, let itsForms = forms[selected] {
         for form in itsForms { owners[normalizedForm(form)] = selected }
     }
-    var result = AttributedString()
     let source = text as NSString
+    let matches = tokenRE.matches(in: text, range: NSRange(location: 0, length: source.length))
+    var labels = Array<String?>(repeating: nil, count: matches.count)
+    let lengths = Set(owners.keys.map { $0.split(separator: " ").count }).sorted()
+    for length in lengths where length > 0 && length <= matches.count {
+        for i in 0...(matches.count - length) {
+            let range = NSUnionRange(matches[i].range, matches[i + length - 1].range)
+            let spelling = normalizedForm(source.substring(with: range)).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+            guard let lemma = owners[spelling] else { continue }
+            for j in i..<(i + length) where selected == nil || labels[j] != selected { labels[j] = lemma }
+        }
+    }
+    var result = AttributedString()
     var start = 0
-    for match in tokenRE.matches(in: text, range: NSRange(location: 0, length: source.length)) {
-        let spelling = source.substring(with: match.range)
-        guard let lemma = owners[normalizedForm(spelling)] else { continue }
-        result += AttributedString(source.substring(with: NSRange(location: start, length: match.range.location - start)))
-        var word = AttributedString(spelling)
+    var i = 0
+    while i < matches.count {
+        let first = i
+        i += 1
+        guard let lemma = labels[first] else { continue }
+        while i < matches.count && labels[i] == lemma {
+            let gap = NSRange(location: NSMaxRange(matches[i-1].range), length: matches[i].range.location - NSMaxRange(matches[i-1].range))
+            if !source.substring(with: gap).allSatisfy({ $0.isWhitespace }) { break }
+            i += 1
+        }
+        let range = NSUnionRange(matches[first].range, matches[i-1].range)
+        result += AttributedString(source.substring(with: NSRange(location: start, length: range.location - start)))
+        var word = AttributedString(source.substring(with: range))
         word.inlinePresentationIntent = .stronglyEmphasized
         word.foregroundColor = .accentColor
         if links {
@@ -41,7 +60,7 @@ func markedText(_ text: String, forms: [String: [String]], selected: String?, li
             if selected == lemma { word.backgroundColor = Color.accentColor.opacity(0.12) }
         }
         result += word
-        start = NSMaxRange(match.range)
+        start = NSMaxRange(range)
     }
     result += AttributedString(source.substring(from: start))
     return result
@@ -134,6 +153,8 @@ struct BookView: View {
     @State private var query = ""
     @State private var wordIDs: [String] = []
     @State private var passages: [Passage] = []
+    @State private var wordShuffle = BookShuffle("words")
+    @State private var passageShuffle = BookShuffle("passages")
     @State private var selectedWord: String?
     @State private var detailPosition = ScrollPosition(edge: .top)
     @State private var selectedPassage: String?
@@ -172,9 +193,9 @@ struct BookView: View {
                 .menuIndicator(.hidden).help("导出与备份")
             }
         }
-        .onAppear { updateResults() }
+        .onAppear { updateResults(newRound: order == .random) }
         .onChange(of: store.revision) { updateResults() }
-        .onChange(of: order) { updateResults(preferMatch: true) }
+        .onChange(of: order) { updateResults(preferMatch: true, newRound: order == .random) }
         .onChange(of: selectedPassage) { choosePassageWord() }
         .onChange(of: mode) { endSearch() }
         .onChange(of: phase) { if phase == .active { store.refresh() } }
@@ -226,7 +247,12 @@ struct BookView: View {
                         Picker("排序", selection: $order) {
                             ForEach(BookOrder.allCases) { value in Text(value.title).tag(value) }
                         }.pickerStyle(.inline).labelsHidden()
-                    } label: { Image(systemName: "arrow.up.arrow.down") }
+                        if order == .random {
+                            Divider()
+                            Button("重新洗牌", systemImage: "shuffle") { updateResults(newRound: true) }
+                                .disabled((mode == .words ? wordIDs.count : passages.count) < 2)
+                        }
+                    } label: { Image(systemName: order == .random ? "shuffle" : "arrow.up.arrow.down") }
                         .menuStyle(.borderlessButton).menuIndicator(.hidden)
                         .padding(.horizontal, 6).frame(minWidth: 32, minHeight: 27)
                         .glassEffect(.regular, in: Capsule())
@@ -391,12 +417,21 @@ struct BookView: View {
         if let id = passageWord, passage.words[id] != nil { return }
         passageWord = orderedWords(passage).first
     }
-    private func updateResults(preferMatch: Bool = false) {
+    private func updateResults(preferMatch: Bool = false, newRound: Bool = false) {
         let oldWordIndex = selectedWord.flatMap { wordIDs.firstIndex(of: $0) } ?? 0
         let oldPassageIndex = passages.firstIndex { $0.id == selectedPassage } ?? 0
-        wordIDs = store.index.wordIDs(matching: query, order: order)
-        passages = store.index.passages(matching: query, order: order)
-        if preferMatch {
+        let index = store.index
+        let text = BookIndex.searchText(query)
+        wordIDs = order.arrange(index.words, matching: { text.isEmpty || index.wordText[$0.id]?.contains(text) == true },
+                                added: { $0.first_seen ?? $0.last_seen ?? "" },
+                                shuffle: wordShuffle, newRound: newRound).map(\.id)
+        passages = order.arrange(index.passages, matching: { text.isEmpty || index.passageText[$0.id]?.contains(text) == true },
+                                 added: { $0.added }, shuffle: passageShuffle, newRound: newRound)
+        if newRound {
+            controls.cancelHold()
+            selectedWord = wordIDs.first
+            selectedPassage = passages.first?.id
+        } else if preferMatch {
             let exact = BookIndex.searchText(query)
             selectedWord = wordIDs.first { id in
                 ([id] + (store.index.byWord[id]?.forms ?? [])).contains { BookIndex.searchText($0) == exact }

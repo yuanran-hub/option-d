@@ -11,6 +11,8 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 import unicodedata
+
+import phrase_lookup
 from datetime import datetime
 from pathlib import Path
 
@@ -62,9 +64,9 @@ def build_dictionary(source, target):
 
 
 def clean_selection(value):
-    value = unicodedata.normalize("NFKC", value).replace("’", "'").replace("–", "-").replace("—", "-")
+    value = unicodedata.normalize("NFKC", value).translate(phrase_lookup.CHARACTERS).replace("’", "'").replace("–", "-").replace("—", "-")
     value = re.sub(r"\s+", " ", value).strip(" \t\n.,;:!?\"'()[]{}")
-    if len(value) > 100 or len(value.split()) > 6 or not re.fullmatch(r"[A-Za-z][A-Za-z '\-]*", value):
+    if len(value) > 220 or len(value.split()) > phrase_lookup.MAX_WORDS or not re.fullmatch(r"[A-Za-z][A-Za-z '\-]*", value):
         raise ValueError("请只复制一个英文单词或短语，再按 ⌥D。")
     return value
 
@@ -89,7 +91,10 @@ def dictionary_lookup(value, dictionary=DATA / "dictionary.sqlite", lemma_hint="
             origins = set(ex.get("0", "").split(","))
         if candidate and (hint == word or hint in variants or hint in origins):
             hinted = candidate
-    if hinted:
+    if " " in word:
+        row = phrase_lookup.resolve(db, word) or row
+        has_inflection = False
+    elif hinted:
         row = hinted
     elif row:
         exchange = dict(p.split(":", 1) for p in (row["exchange"] or "").split("/") if ":" in p)
@@ -269,7 +274,7 @@ def collect(value, root=ROOT, source="选词查词", save=True, dictionary=DATA 
     requested_ns = time.time_ns() if requested_ns is None else requested_ns
     result = dictionary_lookup(value, dictionary, lemma_hint)
     context = context.strip()
-    if context and not re.search(r"(?<![A-Za-z])" + re.escape(result["surface"]) + r"(?![A-Za-z])", context.replace("’", "'").replace("‐", "-").replace("‑", "-"), re.I):
+    if context and not re.search(r"(?<![A-Za-z])" + re.escape(result["surface"]) + r"(?![A-Za-z])", " ".join(context.translate(phrase_lookup.CHARACTERS).split()), re.I):
         raise ValueError("原文中没有找到所选词，未保存不匹配的原文。")
     if not save:
         result.update({"saved": False, "total": 0})
@@ -375,11 +380,25 @@ def serve(root=ROOT):
                         db.close()
         except Exception:
             pass  # The saved entry remains explicitly marked pending; retry on next lookup.
-    with ThreadPoolExecutor(max_workers=1) as writer, ThreadPoolExecutor(max_workers=1) as enricher:
+    latest_scan = None
+    def scan(request):
+        try:
+            result = phrase_lookup.recognize(request["text"], DATA / "dictionary.sqlite",
+                                             cancelled=lambda: latest_scan != request["id"])
+            if latest_scan == request["id"]:
+                emit(dict(result, id=request["id"], event="phrases"))
+        except Exception:
+            emit({"id": request["id"], "event": "phrases", "choices": []})
+
+    with ThreadPoolExecutor(max_workers=1) as scanner, ThreadPoolExecutor(max_workers=1) as writer, ThreadPoolExecutor(max_workers=1) as enricher:
         for line in sys.stdin:
             request = {}
             try:
                 request = json.loads(line)
+                if request.get("action") == "scan":
+                    latest_scan = request["id"]
+                    scanner.submit(scan, request)
+                    continue
                 request["requested_ns"] = time.time_ns()
                 result = dictionary_lookup(request["term"], lemma_hint=request.get("lemma_hint", ""))
                 emit(dict(result, id=request["id"], event="result"))

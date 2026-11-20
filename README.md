@@ -1,16 +1,45 @@
-# Option D · 阅读查词
+# Option D · Mac 上的即时查词浮窗
 
-复制英文，按 **⌥D**。复制单个词会直接显示中文释义和音标；复制一句话，可以在毛玻璃浮窗里点选想查的词。按 **Esc** 收起浮窗，回到阅读。
+**复制英文，按 ⌥D，中文释义就浮在原文旁。** 在网页、PDF 或电子书里遇到生词，手不用离开键盘。看懂了，按 Esc 接着读。词典随 App 安装，断网也能查，收录和补例句都在后台进行。
 
-## 下载使用
+[**下载 Mac 版（DMG）**](https://github.com/yuanran-hub/option-d/releases/latest/download/Option-D.dmg) · [使用截图](#使用截图) · [版本记录](https://github.com/yuanran-hub/option-d/releases)
 
-[下载 Option D for Mac](https://github.com/yuanran-hub/option-d/releases/latest/download/Option-D.dmg) · [查看发布记录](https://github.com/yuanran-hub/option-d/releases)
+macOS 26 及以上 · 支持 Apple 芯片与 Intel · 免费开源
 
-适用于 macOS 26 或更新版本，支持 Apple 芯片和 Intel。打开下载的磁盘映像，把 **Option D** 拖到「应用程序」，再从「应用程序」双击打开。看到菜单栏的「词」后，复制一个英文单词，按 **Option + D** 即可查词。词典和运行所需组件已随 App 附带。
+## 使用截图
 
-公开下载版尚未经过 Apple 公证。如果首次打开时系统提示无法验证开发者，请先确认文件是从本仓库下载的，再到「系统设置 → 隐私与安全性」找到 Option D，点「仍要打开」。[Apple 官方说明](https://support.apple.com/zh-cn/102445)
+**一个词，按下就查。** 复制 `glimpse`，按 ⌥D，音标和中文释义一起出现。浮窗可以留在屏幕上，对照原文慢慢读。
 
-![在原句中查看 policies 的释义](assets/lookup.png)
+<img src="assets/single-word.png" width="502" alt="glimpse 的查词浮窗，显示音标、一瞥等中文释义和已收录状态">
+
+查一次有多快？在一台 Apple M2 Mac 上，应用已运行时测了 51 次单词查询。从浮窗收到文本到更新释义，中位数为 **15 毫秒**，95% 的查询在 **约 56 毫秒**内完成。计时从应用收到文本开始，不含系统派发快捷键、屏幕刷新及首次启动。
+
+**每个词都认识，连起来却读不懂？** 连句子一起复制，按 ⌥D。点一个词就查单词，点浮窗识别出的短语或直接拖过几个词，就查整段表达。比如下面这句里的 `spilled the beans`，点一下就知道是「说漏嘴」。只复制词典收录的完整短语，也能直接出释义。
+
+<img src="assets/phrase.png" width="502" alt="原句中的 spilled the beans 被高亮，浮窗显示原形 spill the beans 和释义「说漏嘴」">
+
+**下次复习，还能看见当时那句话。** 在另一篇文章里又遇到同一个词，新原句会添在同一词条下。打开菜单栏「词」里的阅读生词本，先看原句回想，按住空格看释义，松开遮住，用方向键切词。想换个顺序，选「随机顺序」或点「重新洗牌」。时间和字母都支持正序、倒序。
+
+<img src="assets/notebook.png" width="740" alt="生词本将两句原文归在 spill the beans 下，默认遮住释义，右下角提示按住空格查看">
+
+## 安装
+
+1. 下载并打开 `Option-D.dmg`，把 **Option D** 拖到「应用程序」。
+2. 从「应用程序」打开 Option D。看到 Mac 菜单栏的「词」，复制一个英文单词，按 **⌥D** 就能试用。如果希望每次开机就能查，可将它加入 macOS 登录项。
+
+公开版尚未经过 Apple 公证。如果首次打开时系统提示无法验证开发者，请先确认文件来自本仓库，再到「系统设置 → 隐私与安全性」找到 Option D，点「仍要打开」。[Apple 官方说明](https://support.apple.com/zh-cn/102445)
+
+## 词典与生词本
+
+- **查释义**用本机 ECDICT 英汉词典。应用只在你主动查词时读取剪贴板。遇到本机未收录的短语，可以点「联网查短语」在有道查询所选表达。
+- **记语境**时，词形依据词典归入原形，同一条原文自动去重。单独查词会优先配上本地 Wordset 例句，缺例句时才在后台用该词向 Free Dictionary API 尝试补充。
+- **翻词库**时，可以搜单词、中文或原句，也可以删除词条、撤销删除，或用工具栏导出和备份。
+
+## 数据与许可
+
+个人词条、原句以及 Word、HTML、JSON 导出保存在 `~/Library/Application Support/OptionD/Reading/`。生词本工具栏可导出和备份。
+
+应用代码使用 [MIT 许可证](LICENSE)。ECDICT 使用 MIT；Wordset 例句按 CC BY-SA 4.0 提供，并保留其 WordNet 声明。构建脚本从指定上游版本提取例句并创建本地索引。在线补充例句保留接口返回的来源与许可信息。[ECDICT](https://github.com/skywind3000/ECDICT) · [Wordset](https://github.com/wordset/wordset-dictionary) · [第三方许可](licenses/)
 
 ## 在 Mac 上构建
 
@@ -25,27 +54,15 @@ open "build/Option D.app"
 
 制作可分发的通用安装包可运行 `bash build.sh --dmg`，生成的文件在 `build/Option-D.dmg`。
 
-生成的 App 可以移到「应用程序」。启动后，菜单栏会出现「词」。如果日常使用，可以将 App 加入 macOS 的登录项。
-
-## 查词与复习
-
-- **复制 → ⌥D**，在本机 ECDICT 词典查义。只有主动查词时才读取剪贴板。
-- **点原文里的词**，保留整段原文，并根据词典和句中词形归入原形。同一个词在不同句子出现时，生词本会保留各句。
-- **打开菜单栏「词」→「打开阅读生词本」**，用方向键切词，按住空格看释义，松开即遮住。支持按收录时间或字母双向排序、搜索、删除和撤销。
-- **只查一个词时**，优先使用本机 Wordset 例句。若本地缺例句，后台会把单词发给 Free Dictionary API 尝试补充。复制的原句留在本机。释义先显示，例句和文稿在后台处理。
-
-## 数据与许可
-
-个人词条、原句以及 Word、HTML、JSON 导出保存在 `~/Library/Application Support/OptionD/Reading/`。生词本工具栏可导出和备份。
-
-应用代码使用 [MIT 许可证](LICENSE)。ECDICT 使用 MIT；Wordset 例句按 CC BY-SA 4.0 提供，并保留其 WordNet 声明。构建脚本从指定上游版本提取例句并创建本地索引。在线补充例句保留接口返回的来源与许可信息。[ECDICT](https://github.com/skywind3000/ECDICT) · [Wordset](https://github.com/wordset/wordset-dictionary) · [第三方许可](licenses/)
-
 ## 运行测试
 
-先完成构建，然后运行：
+
+完成开发版构建后，可运行查词与洗牌测试。
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD/build/Option D.app/Contents/Resources/runtime/vendor" \
 OPTION_D_DICTIONARY_DATA="$PWD/.build/data" \
   /usr/bin/python3 -m unittest discover -s runtime
+xcrun swiftc book/BookData.swift tests/ShuffleTests.swift -o .build/shuffle-tests
+.build/shuffle-tests
 ```

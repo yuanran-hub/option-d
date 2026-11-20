@@ -5,6 +5,42 @@ import NaturalLanguage
 let backendPath = Bundle.main.resourceURL!.appendingPathComponent("runtime/backend.py").path
 
 final class ReadingTextView: NSTextView {
+    var passageSelection: ((NSRange) -> Void)?
+    // Track the gesture before following a word link. A drag must never also look up its first word.
+    override func mouseDown(with event: NSEvent) {
+        guard let passageSelection, let window, let layout = layoutManager, let container = textContainer else {
+            super.mouseDown(with: event)
+            return
+        }
+        let down = convert(event.locationInWindow, from: nil)
+        let anchor = characterIndexForInsertion(at: down)
+        var dragged = false
+        while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            let point = convert(next.locationInWindow, from: nil)
+            if hypot(point.x - down.x, point.y - down.y) >= 3 { dragged = true }
+            if dragged {
+                _ = autoscroll(with: next)
+                let end = characterIndexForInsertion(at: convert(next.locationInWindow, from: nil))
+                setSelectedRange(NSRange(location: min(anchor, end), length: abs(end - anchor)))
+            }
+            if next.type == .leftMouseUp {
+                if dragged {
+                    if selectedRange().length > 0 { passageSelection(selectedRange()) }
+                } else if layout.numberOfGlyphs > 0 {
+                    let origin = textContainerOrigin
+                    let p = NSPoint(x: down.x - origin.x, y: down.y - origin.y)
+                    let glyph = layout.glyphIndex(for: p, in: container)
+                    guard glyph < layout.numberOfGlyphs else { break }
+                    let box = layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container)
+                    if box.contains(p) {
+                        passageSelection(NSRange(location: layout.characterIndexForGlyph(at: glyph), length: 1))
+                    }
+                }
+                break
+            }
+        }
+    }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
@@ -63,6 +99,11 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
     var currentRequest = ""
     var pending: [String: [String: Any]] = [:]
     var alternate: NSButton!
+    var scanID = ""
+    var phraseRow: NSStackView!
+    var online: NSButton!
+    var phraseRanges: [NSRange] = []
+    private let pipeQueue = DispatchQueue(label: "lookup.requests")
     var selectedSurface = ""
     var selectedHint = ""
 
@@ -117,6 +158,10 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
     func receive(_ result: [String: Any]) {
         guard let id = result["id"] as? String else { return }
         let event = result["event"] as? String ?? ""
+        if event == "phrases" {
+            if id == scanID { receivePhrases(result) }
+            return
+        }
         if event == "saved" || result["error"] != nil { pending.removeValue(forKey: id) }
         guard id == currentRequest else { return }
         if let error = result["error"] as? String {
@@ -131,9 +176,11 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
             let form = selectedSurface.lowercased() == lemma.lowercased() ? "" : "来自 " + selectedSurface
             info.stringValue = [phonetic.isEmpty ? "音标待补" : "/" + phonetic + "/", form]
                 .filter { !$0.isEmpty }.joined(separator: "    ·    ")
-            info.isHidden = false
+            info.isHidden = phonetic.isEmpty && selectedSurface.contains(" ")
             let translation = result["translation"] as? String ?? ""
-            setMeaning(translation.isEmpty ? "词库暂无中文释义" : translation)
+            let missingPhrase = translation.isEmpty && selectedSurface.contains(" ")
+            online.isHidden = !missingPhrase
+            setMeaning(missingPhrase ? "本地未收录这个短语" : (translation.isEmpty ? "词库暂无中文释义" : translation))
             alternate.isHidden = result["has_inflection"] as? Bool != true
             alternate.title = lemma == selectedSurface.lowercased() ? "查看原形" : "查 " + selectedSurface
             setStatus("正在收录", symbol: "clock")
@@ -150,7 +197,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        try? workerInput?.close()
+        pipeQueue.sync { try? workerInput?.close() }
         guard let process = worker, process.isRunning else { return .terminateNow }
         DispatchQueue.global().async {
             process.waitUntilExit()
@@ -332,6 +379,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         contextScroll = NSScrollView()
         contextView = readingView(in: contextScroll, label: "原文，点按单词查义")
         contextView.delegate = self
+        (contextView as? ReadingTextView)?.passageSelection = { [weak self] range in self?.selectPassage(range) }
         contextView.textColor = .labelColor
         contextView.linkTextAttributes = [.cursor: NSCursor.pointingHand]
         contextScroll.translatesAutoresizingMaskIntoConstraints = false
@@ -369,11 +417,20 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         alternate.controlSize = .small
         alternate.font = .systemFont(ofSize: 12)
         alternate.toolTip = "切换所查拼写和词典原形"
-        for view in [contextCard!, headword!, info!, meaningScroll!, alternate!] as [NSView] {
+        phraseRow = NSStackView()
+        phraseRow.orientation = .horizontal
+        phraseRow.spacing = 6
+        phraseRow.alignment = .centerY
+        phraseRow.distribution = .gravityAreas
+        online = NSButton(title: "联网查短语 ↗", target: self, action: #selector(searchOnline))
+        online.bezelStyle = .glass
+        online.controlSize = .small
+        online.toolTip = "在浏览器中用有道查询所选短语"
+        for view in [contextCard!, phraseRow!, headword!, info!, meaningScroll!, alternate!, online!] as [NSView] {
             bodyStack.addArrangedSubview(view)
-            if view !== alternate { view.widthAnchor.constraint(equalTo: bodyStack.widthAnchor).isActive = true }
+            if view !== alternate && view !== online { view.widthAnchor.constraint(equalTo: bodyStack.widthAnchor).isActive = true }
         }
-        bodyStack.setCustomSpacing(16, after: contextCard)
+        bodyStack.setCustomSpacing(6, after: contextCard)
         bodyStack.setCustomSpacing(2, after: headword)
         bodyStack.setCustomSpacing(14, after: info)
 
@@ -475,6 +532,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         var bodyHeight: CGFloat = 0
         for (index, view) in visible.enumerated() {
             if view === contextCard { bodyHeight += contextHeight.constant }
+            else if view === phraseRow { bodyHeight += max(24, phraseRow.fittingSize.height) }
             else if view === meaningScroll { bodyHeight += meaningHeight.constant }
             else { bodyHeight += view.intrinsicContentSize.height }
             if index + 1 < visible.count {
@@ -531,6 +589,8 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
 
     private func resetSelection(source: String) {
         currentRequest = ""
+        scanID = ""
+        phraseRanges = []
         copiedContext = ""
         lookupSource = source
         markedWord = nil
@@ -568,14 +628,101 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
             contextView.setSelectedRange(NSRange(location: 0, length: 0))
             contextView.scrollToBeginningOfDocument(nil)
             contextCard.isHidden = false
-            setStatus("点按原文中的单词查看释义", symbol: "hand.point.up.left")
+            setStatus("点单词，或拖选几个词查短语", symbol: "hand.point.up.left")
             fitPanel()
+            scanID = UUID().uuidString
+            send(["action": "scan", "id": scanID, "text": text])
         }
     }
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
         guard let url = link as? URL, let index = Int(url.lastPathComponent), tokenRanges.indices.contains(index) else { return true }
-        let range = tokenRanges[index]
+        selectPassage(tokenRanges[index])
+        return true
+    }
+
+    private func receivePhrases(_ result: [String: Any]) {
+        guard let choices = result["choices"] as? [[String: Any]] else { return }
+        phraseRanges = choices.compactMap { item in
+            guard let first = item["first"] as? Int, let last = item["last"] as? Int,
+                  tokenRanges.indices.contains(first), tokenRanges.indices.contains(last), first <= last else { return nil }
+            return NSUnionRange(tokenRanges[first], tokenRanges[last])
+        }
+        guard !phraseRanges.isEmpty else { return }
+        let source = copiedContext as NSString
+        if result["exact"] as? Bool == true, currentRequest.isEmpty {
+            let term = source.substring(with: phraseRanges[0])
+            copiedContext = ""
+            contextCard.isHidden = true
+            perform(term: term, source: lookupSource)
+            fitPanel()
+            return
+        }
+        for view in phraseRow.views(in: .leading) { phraseRow.removeView(view) }
+        let label = NSTextField(labelWithString: "短语")
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = .secondaryLabelColor
+        phraseRow.addView(label, in: .leading)
+        let names = phraseRanges.map { source.substring(with: $0).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ") }
+        let font = NSFont.systemFont(ofSize: 12)
+        var remaining = max(1, bodyStack.bounds.width - 110)
+        var shown = 0
+        for (i, name) in names.enumerated() {
+            let width = ceil((name as NSString).size(withAttributes: [.font: font]).width) + 32
+            if i > 0 && width > remaining { break }
+            let button = NSButton(title: name, target: self, action: #selector(choosePhrase(_:)))
+            button.tag = i
+            button.bezelStyle = .glass
+            button.borderShape = .capsule
+            button.controlSize = .small
+            button.font = font
+            button.cell?.lineBreakMode = .byTruncatingTail
+            button.toolTip = name
+            phraseRow.addView(button, in: .leading)
+            button.widthAnchor.constraint(lessThanOrEqualToConstant: remaining).isActive = true
+            remaining -= width
+            shown += 1
+        }
+        if shown < names.count {
+            let more = NSPopUpButton(frame: .zero, pullsDown: true)
+            more.controlSize = .small
+            more.bezelStyle = .glass
+            more.addItem(withTitle: "+\(names.count - shown)")
+            for i in shown..<names.count {
+                let item = NSMenuItem(title: names[i], action: #selector(choosePhrase(_:)), keyEquivalent: "")
+                item.target = self
+                item.tag = i
+                more.menu?.addItem(item)
+            }
+            phraseRow.addView(more, in: .leading)
+        }
+        phraseRow.isHidden = false
+        fitPanel()
+    }
+
+    @objc private func choosePhrase(_ sender: AnyObject) {
+        let index = (sender as? NSControl)?.tag ?? (sender as? NSMenuItem)?.tag ?? -1
+        if phraseRanges.indices.contains(index) { selectPassage(phraseRanges[index]) }
+    }
+
+    @objc private func searchOnline() {
+        var url = URLComponents(string: "https://www.youdao.com/result")!
+        url.queryItems = [URLQueryItem(name: "word", value: selectedSurface), URLQueryItem(name: "lang", value: "en")]
+        if let target = url.url { NSWorkspace.shared.open(target) }
+    }
+
+    private func selectPassage(_ selection: NSRange) {
+        let tokens = tokenRanges.filter { NSIntersectionRange($0, selection).length > 0 }
+        guard let first = tokens.first, let last = tokens.last else { return }
+        let range = NSUnionRange(first, last)
+        let surface = (copiedContext as NSString).substring(with: range)
+        if tokens.count > 1 {
+            let rest = Self.tokenPattern.stringByReplacingMatches(in: surface, range: NSRange(location: 0, length: (surface as NSString).length), withTemplate: "")
+            guard tokens.count <= 16 && rest.allSatisfy({ $0.isWhitespace }) else {
+                setStatus("请选择一段连续的英文短语", symbol: "text.cursor")
+                return
+            }
+        }
         if let previous = markedWord {
             contextView.textStorage?.addAttribute(.font, value: passageFont, range: previous)
             contextView.textStorage?.addAttribute(.foregroundColor, value: NSColor.labelColor, range: previous)
@@ -588,7 +735,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         contextView.setSelectedRange(NSRange(location: range.location, length: 0))
         let word = (copiedContext as NSString).substring(with: range)
         var hint = ""
-        if let swiftRange = Range(range, in: copiedContext) {
+        if tokens.count == 1, let swiftRange = Range(range, in: copiedContext) {
             let tagger = NLTagger(tagSchemes: [.lemma, .lexicalClass])
             tagger.string = copiedContext
             tagger.setLanguage(.english, range: copiedContext.startIndex..<copiedContext.endIndex)
@@ -596,8 +743,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
             let lexicalClass = tagger.tag(at: swiftRange.lowerBound, unit: .word, scheme: .lexicalClass).0
             if hint.lowercased() == word.lowercased() && lexicalClass == .verb { hint = "" }
         }
-        perform(term: word, source: lookupSource, hint: hint)
-        return true
+        perform(term: word.split(whereSeparator: { $0.isWhitespace }).joined(separator: " "), source: lookupSource, hint: hint)
     }
 
     @objc func toggleLemma() {
@@ -607,8 +753,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
     }
 
     func perform(term: String, source: String, hint: String = "") {
-        if worker?.isRunning != true { startWorker() }
-        guard worker?.isRunning == true, let workerInput else { return }
+        online.isHidden = true
         headword.stringValue = term
         headword.isHidden = false
         info.isHidden = true
@@ -621,12 +766,26 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         currentRequest = id
         let request: [String: Any] = ["id": id, "term": term, "source": source, "context": copiedContext, "lemma_hint": hint]
         pending[id] = request
-        guard let data = try? JSONSerialization.data(withJSONObject: request) else { return }
-        do {
-            try workerInput.write(contentsOf: data + Data([10]))
-        } catch {
+        send(request)
+    }
+
+    private func send(_ request: [String: Any]) {
+        if worker?.isRunning != true { startWorker() }
+        guard let id = request["id"] as? String else { return }
+        guard let pipe = workerInput, worker?.isRunning == true else {
             pending.removeValue(forKey: id)
-            setStatus("查词服务不可用，请重试", symbol: "exclamationmark.circle")
+            return
+        }
+        pipeQueue.async {
+            do {
+                let bytes = try JSONSerialization.data(withJSONObject: request)
+                try pipe.write(contentsOf: bytes + Data([10]))
+            } catch {
+                DispatchQueue.main.async {
+                    self.pending.removeValue(forKey: id)
+                    if self.currentRequest == id { self.setStatus("查词服务不可用，请重试", symbol: "exclamationmark.circle") }
+                }
+            }
         }
     }
 
@@ -657,6 +816,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
 
     @objc func closePanel() {
         currentRequest = ""
+        scanID = ""
         panel?.orderOut(nil)
         returnApplication?.activate(options: [])
     }
