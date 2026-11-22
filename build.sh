@@ -5,13 +5,13 @@ sdk="${SDKROOT:-$(xcrun --sdk macosx26.5 --show-sdk-path 2>/dev/null || xcrun --
 mkdir -p .build build
 stage="$(mktemp -d "$PWD/.build/package.XXXXXXXX")"
 trap 'rm -rf "$stage"' EXIT
-app="$PWD/build/Option D.app"
+app="$PWD/build/查词.app"
 cpus=("$(uname -m)")
 flags=(-O)
 case "${1:-}" in
   --dmg)
     mkdir "$stage/disk"
-    app="$stage/disk/Option D.app"
+    app="$stage/disk/查词.app"
     cpus=(arm64 x86_64)
     flags+=(-D PORTABLE)
     ;;
@@ -51,9 +51,9 @@ codesign --force --sign - "$app"
 codesign --verify --deep --strict "$app"
 if [[ "${1:-}" == --dmg ]]; then
   ln -s /Applications "$stage/disk/Applications"
-  hdiutil create -quiet -volname "Option D" -format UDZO -srcfolder "$stage/disk" "$stage/Option-D.dmg"
-  mv -f "$stage/Option-D.dmg" build/Option-D.dmg
-  echo "$PWD/build/Option-D.dmg"
+  hdiutil create -quiet -volname "查词" -format UDZO -srcfolder "$stage/disk" "$stage/查词.dmg"
+  mv -f "$stage/查词.dmg" build/查词.dmg
+  echo "$PWD/build/查词.dmg"
 else
   echo "$app"
 fi

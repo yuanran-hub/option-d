@@ -240,7 +240,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         documentItem.target = self
         menu.addItem(documentItem)
         menu.addItem(.separator())
-        let quitItem = NSMenuItem(title: "退出查词工具", action: #selector(quit), keyEquivalent: "")
+        let quitItem = NSMenuItem(title: "退出查词", action: #selector(quit), keyEquivalent: "")
         quitItem.target = self
         menu.addItem(quitItem)
         statusItem?.menu = menu
@@ -331,7 +331,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         let window = LookupPanel(contentRect: NSRect(x: 0, y: 0, width: 502, height: 216),
                                  styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         panel = window
-        window.title = "雅思查词"
+        window.title = "查词"
         window.toolbarStyle = .unifiedCompact
         window.isOpaque = false
         window.backgroundColor = .clear

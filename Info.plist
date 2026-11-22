@@ -5,19 +5,19 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh_CN</string>
 	<key>CFBundleDisplayName</key>
-	<string>雅思查词</string>
+	<string>查词</string>
 	<key>CFBundleExecutable</key>
 	<string>OptionD</string>
 	<key>CFBundleIdentifier</key>
 	<string>io.github.yuanran-hub.option-d</string>
 	<key>CFBundleName</key>
-	<string>OptionD</string>
+	<string>查词</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.10</string>
+	<string>1.11</string>
 	<key>CFBundleVersion</key>
-	<string>11</string>
+	<string>12</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
 	<key>LSUIElement</key>
@@ -35,12 +35,12 @@
 			<key>NSMenuItem</key>
 			<dict>
 				<key>default</key>
-				<string>Option D 查词并自动收录</string>
+				<string>查词并自动收录</string>
 			</dict>
 			<key>NSMessage</key>
 			<string>lookup</string>
 			<key>NSPortName</key>
-			<string>OptionD</string>
+			<string>查词</string>
 			<key>NSRequiredContext</key>
 			<dict/>
 			<key>NSReturnTypes</key>

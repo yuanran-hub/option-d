@@ -1,8 +1,8 @@
-# Option D · Mac 上的即时查词浮窗
+# 查词 · Mac 上的即时查词浮窗
 
 **复制英文，按 ⌥D，中文释义就浮在原文旁。** 在网页、PDF 或电子书里遇到生词，手不用离开键盘。看懂了，按 Esc 接着读。词典随 App 安装，断网也能查，收录和补例句都在后台进行。
 
-[**下载 Mac 版（DMG）**](https://github.com/yuanran-hub/option-d/releases/latest/download/Option-D.dmg) · [使用截图](#使用截图) · [版本记录](https://github.com/yuanran-hub/option-d/releases)
+[**下载「查词」Mac 版（DMG）**](https://github.com/yuanran-hub/option-d/releases/latest/download/Chaci.dmg) · [使用截图](#使用截图) · [版本记录](https://github.com/yuanran-hub/option-d/releases)
 
 macOS 26 及以上 · 支持 Apple 芯片与 Intel · 免费开源
 
@@ -24,10 +24,12 @@ macOS 26 及以上 · 支持 Apple 芯片与 Intel · 免费开源
 
 ## 安装
 
-1. 下载并打开 `Option-D.dmg`，把 **Option D** 拖到「应用程序」。
-2. 从「应用程序」打开 Option D。看到 Mac 菜单栏的「词」，复制一个英文单词，按 **⌥D** 就能试用。如果希望每次开机就能查，可将它加入 macOS 登录项。
+1. 打开下载的磁盘映像，把「查词」拖到「应用程序」。
+2. 从「应用程序」打开「查词」。看到 Mac 菜单栏的「词」，复制一个英文单词，按 **⌥D** 就能试用。如果希望每次开机就能查，可将它加入 macOS 登录项。
 
-公开版尚未经过 Apple 公证。如果首次打开时系统提示无法验证开发者，请先确认文件来自本仓库，再到「系统设置 → 隐私与安全性」找到 Option D，点「仍要打开」。[Apple 官方说明](https://support.apple.com/zh-cn/102445)
+从 1.10 或更早的公开版升级时，先从菜单栏退出旧版，再把「应用程序」中的旧 App 改名为「查词」，将新版拖入并选择替换。启动后，原有生词本会自动载入。
+
+公开版尚未经过 Apple 公证。如果首次打开时系统提示无法验证开发者，请先确认文件来自本仓库，再到「系统设置 → 隐私与安全性」找到「查词」，点「仍要打开」。[Apple 官方说明](https://support.apple.com/zh-cn/102445)
 
 ## 词典与生词本
 
@@ -49,18 +51,17 @@ macOS 26 及以上 · 支持 Apple 芯片与 Intel · 免费开源
 git clone https://github.com/yuanran-hub/option-d.git
 cd option-d
 bash build.sh
-open "build/Option D.app"
+open "build/查词.app"
 ```
 
-制作可分发的通用安装包可运行 `bash build.sh --dmg`，生成的文件在 `build/Option-D.dmg`。
+制作可分发的通用安装包可运行 `bash build.sh --dmg`，生成的文件在 `build/查词.dmg`。
 
 ## 运行测试
-
 
 完成开发版构建后，可运行查词与洗牌测试。
 
 ```sh
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD/build/Option D.app/Contents/Resources/runtime/vendor" \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD/build/查词.app/Contents/Resources/runtime/vendor" \
 OPTION_D_DICTIONARY_DATA="$PWD/.build/data" \
   /usr/bin/python3 -m unittest discover -s runtime
 xcrun swiftc book/BookData.swift tests/ShuffleTests.swift -o .build/shuffle-tests

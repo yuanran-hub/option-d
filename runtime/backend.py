@@ -217,7 +217,7 @@ def export_records(root, items):
     doc.styles["Normal"].paragraph_format.line_spacing = 1.05
     doc.styles["Heading 1"].paragraph_format.space_before = Pt(6)
     doc.styles["Heading 1"].paragraph_format.space_after = Pt(1)
-    doc.add_paragraph("雅思阅读查词记录", "Title")
+    doc.add_paragraph("查词记录", "Title")
     doc.add_paragraph(f"已收录 {len(items)} 个词条。查词时自动更新，重复查询合并到同一词条。")
     if not items:
         doc.add_paragraph("选中英文单词或短语，按 ⌘C 复制，再按 ⌥D 查看中文。查过的词会自动出现在这里。")
@@ -263,7 +263,7 @@ def export_records(root, items):
     def context_html(row):
         return "".join("<blockquote>原文：" + html.escape(c["text"]) + "</blockquote>" for c in row.get("contexts", []))
     cards = "".join(f"<article><h2>{html.escape(r['lemma'])}</h2><p class='phonetic'>{html.escape(phonetic_label(r['phonetic']))}</p><p class='meaning'>{html.escape(r['translation'] or '暂无中文释义，已列入待补')}</p>{example_html(r)}{context_html(r)}</article>" for r in payload)
-    page = """<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>雅思阅读查词记录</title><style>body{font:14px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;max-width:850px;margin:24px auto;padding:0 25px;background:#faf9f5;color:#242421}h1{font-size:22px}h2{font-size:17px;margin:0}small,footer{font-size:12px;color:#666}article{background:white;padding:12px;margin:8px 0;border:1px solid #e2e1db;border-radius:10px}.meaning{white-space:pre-wrap;margin:4px 0}input{box-sizing:border-box;width:100%;padding:12px;font-size:17px;border:1px solid #aaa;border-radius:8px}</style><h1>雅思阅读查词记录</h1>"""
+    page = """<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>查词记录</title><style>body{font:14px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;max-width:850px;margin:24px auto;padding:0 25px;background:#faf9f5;color:#242421}h1{font-size:22px}h2{font-size:17px;margin:0}small,footer{font-size:12px;color:#666}article{background:white;padding:12px;margin:8px 0;border:1px solid #e2e1db;border-radius:10px}.meaning{white-space:pre-wrap;margin:4px 0}input{box-sizing:border-box;width:100%;padding:12px;font-size:17px;border:1px solid #aaa;border-radius:8px}</style><h1>查词记录</h1>"""
     page += f"<p>已收录 {len(items)} 个词条。音标对应词条原形。查词后自动更新；刷新页面即可看到最新记录。</p><input id='search' placeholder='搜索单词或中文释义' aria-label='搜索词条'>"
     page += cards or "<p>选中英文单词，按 ⌘C 复制，再按 ⌥D。之后的整理自动完成。</p>"
     page += "<script>document.querySelector('#search').addEventListener('input',e=>document.querySelectorAll('article').forEach(a=>a.hidden=!a.textContent.toLowerCase().includes(e.target.value.toLowerCase())))</script></html>"
