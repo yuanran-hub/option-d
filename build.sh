@@ -30,7 +30,7 @@ else
 fi
 cp Info.plist "$app/Contents/Info.plist"
 cp book/Info.plist "$helper/Contents/Info.plist"
-cp runtime/backend.py runtime/example_service.py runtime/phrase_lookup.py "$runtime/"
+cp runtime/backend.py runtime/context_notes.py runtime/example_service.py runtime/phrase_lookup.py "$runtime/"
 cp runtime/book/*.py "$runtime/book/"
 cp .build/data/{dictionary,examples}.sqlite "$runtime/data/"
 cp LICENSE licenses/*.txt "$resources/licenses/"

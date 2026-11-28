@@ -12,6 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 import unicodedata
 
+import context_notes
 import phrase_lookup
 from datetime import datetime
 from pathlib import Path
@@ -136,6 +137,7 @@ def open_records(root):
         PRIMARY KEY (lemma, text))""")
     db.execute("""CREATE TABLE IF NOT EXISTS book_deletions (
         lemma TEXT PRIMARY KEY, cutoff_ns INTEGER NOT NULL, token TEXT, payload TEXT)""")
+    db.execute(context_notes.SCHEMA)
     db.commit()
     return db
 
@@ -158,12 +160,16 @@ def local_example(lemma, root=ROOT):
 
 def records(db, root=ROOT):
     items = [dict(r) for r in db.execute("SELECT * FROM entries ORDER BY first_seen, lemma")]
+    occurrences = context_notes.for_export(db)
     for item in items:
         item["example"] = local_example(item["lemma"], root)
         item["contexts"] = [dict(r) for r in db.execute(
             "SELECT text, forms, first_seen, last_seen, source FROM contexts WHERE lemma=? ORDER BY first_seen, text", (item["lemma"],))]
         for context in item["contexts"]:
             context["forms"] = json.loads(context["forms"])
+            positions = occurrences.get((item["lemma"], context["text"]))
+            if positions:
+                context["occurrences"] = positions
     return items
 
 
@@ -221,30 +227,33 @@ def export_records(root, items):
     doc.add_paragraph(f"已收录 {len(items)} 个词条。查词时自动更新，重复查询合并到同一词条。")
     if not items:
         doc.add_paragraph("选中英文单词或短语，按 ⌘C 复制，再按 ⌥D 查看中文。查过的词会自动出现在这里。")
+    entry_paragraphs = []
+    def entry_paragraph(*args):
+        paragraph = doc.add_paragraph(*args)
+        entry_paragraphs.append(paragraph)
+        return paragraph
     for row in payload:
-        entry_start = len(doc.paragraphs)
-        heading = doc.add_paragraph(row["lemma"] + "    " + phonetic_label(row["phonetic"]), "Heading 1")
-        meaning = doc.add_paragraph((row["translation"] or "词库暂无中文释义，已列入待补释义。").replace("\n", "；"))
+        entry_paragraphs.clear()
+        heading = entry_paragraph(row["lemma"] + "    " + phonetic_label(row["phonetic"]), "Heading 1")
+        meaning = entry_paragraph((row["translation"] or "词库暂无中文释义，已列入待补释义。").replace("\n", "；"))
         meaning.paragraph_format.keep_with_next = True
         example = row.get("example")
         if example:
-            p = doc.add_paragraph("补充例句：" + example["text"])
+            p = entry_paragraph("补充例句：" + example["text"])
             p.paragraph_format.keep_with_next = True
             if example.get("translation"):
-                doc.add_paragraph(example["translation"])
+                entry_paragraph(example["translation"])
         elif not row.get("contexts"):
-            doc.add_paragraph("补充例句待补（暂未找到可靠例句）")
+            entry_paragraph("补充例句待补（暂未找到可靠例句）")
         for context in row.get("contexts", []):
-            para = doc.add_paragraph("原文：")
-            # Bold the encountered forms while retaining the complete copied text.
-            forms_pattern = "|".join(re.escape(f) for f in sorted(context["forms"], key=len, reverse=True))
-            pattern = re.compile(r"(?<![A-Za-z])(" + forms_pattern + r")(?![A-Za-z])", re.I)
-            for index, part in enumerate(pattern.split(context["text"])):
-                run = para.add_run(part)
-                run.bold = bool(index % 2)
-        for paragraph in doc.paragraphs[entry_start:-1]:
+            para = entry_paragraph("原文：")
+            for fragment, bold in context_notes.segments(context):
+                para.add_run(fragment).bold = bold
+            for line in context_notes.note_lines(context):
+                entry_paragraph(line)
+        for paragraph in entry_paragraphs[:-1]:
             paragraph.paragraph_format.keep_with_next = True
-        doc.paragraphs[-1].paragraph_format.keep_with_next = False
+        entry_paragraphs[-1].paragraph_format.keep_with_next = False
     for paragraph in doc.paragraphs:
         properties = paragraph._p.get_or_add_pPr()
         snap = OxmlElement("w:snapToGrid")
@@ -261,7 +270,13 @@ def export_records(root, items):
             return "" if row.get("contexts") else "<p>补充例句待补</p>"
         return "<p>补充例句：" + html.escape(e["text"]) + "</p>" + ("<p>" + html.escape(e["translation"]) + "</p>" if e.get("translation") else "")
     def context_html(row):
-        return "".join("<blockquote>原文：" + html.escape(c["text"]) + "</blockquote>" for c in row.get("contexts", []))
+        blocks = []
+        for c in row.get("contexts", []):
+            passage = "".join("<b>" + html.escape(s) + "</b>" if bold else html.escape(s)
+                              for s, bold in context_notes.segments(c))
+            notes = "".join("<p>" + html.escape(line) + "</p>" for line in context_notes.note_lines(c))
+            blocks.append("<blockquote>原文：" + passage + notes + "</blockquote>")
+        return "".join(blocks)
     cards = "".join(f"<article><h2>{html.escape(r['lemma'])}</h2><p class='phonetic'>{html.escape(phonetic_label(r['phonetic']))}</p><p class='meaning'>{html.escape(r['translation'] or '暂无中文释义，已列入待补')}</p>{example_html(r)}{context_html(r)}</article>" for r in payload)
     page = """<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>查词记录</title><style>body{font:14px/1.4 -apple-system,BlinkMacSystemFont,sans-serif;max-width:850px;margin:24px auto;padding:0 25px;background:#faf9f5;color:#242421}h1{font-size:22px}h2{font-size:17px;margin:0}small,footer{font-size:12px;color:#666}article{background:white;padding:12px;margin:8px 0;border:1px solid #e2e1db;border-radius:10px}.meaning{white-space:pre-wrap;margin:4px 0}input{box-sizing:border-box;width:100%;padding:12px;font-size:17px;border:1px solid #aaa;border-radius:8px}</style><h1>查词记录</h1>"""
     page += f"<p>已收录 {len(items)} 个词条。音标对应词条原形。查词后自动更新；刷新页面即可看到最新记录。</p><input id='search' placeholder='搜索单词或中文释义' aria-label='搜索词条'>"
@@ -270,11 +285,13 @@ def export_records(root, items):
     atomic_write(destination / "查词自动收录.html", page)
 
 
-def collect(value, root=ROOT, source="选词查词", save=True, dictionary=DATA / "dictionary.sqlite", context="", lemma_hint="", requested_ns=None):
+def collect(value, root=ROOT, source="选词查词", save=True, dictionary=DATA / "dictionary.sqlite", context="", lemma_hint="", requested_ns=None, parts=None):
     requested_ns = time.time_ns() if requested_ns is None else requested_ns
     result = dictionary_lookup(value, dictionary, lemma_hint)
     context = context.strip()
-    if context and not re.search(r"(?<![A-Za-z])" + re.escape(result["surface"]) + r"(?![A-Za-z])", " ".join(context.translate(phrase_lookup.CHARACTERS).split()), re.I):
+    if parts:
+        context_notes.validate_selection(context, parts, result["surface"])
+    elif context and not re.search(r"(?<![A-Za-z])" + re.escape(result["surface"]) + r"(?![A-Za-z])", " ".join(context.translate(phrase_lookup.CHARACTERS).split()), re.I):
         raise ValueError("原文中没有找到所选词，未保存不匹配的原文。")
     if not save:
         result.update({"saved": False, "total": 0})
@@ -310,6 +327,9 @@ def collect(value, root=ROOT, source="选词查词", save=True, dictionary=DATA 
             db.execute("""INSERT INTO contexts VALUES (?,?,?,?,?,?)
                 ON CONFLICT(lemma,text) DO UPDATE SET forms=excluded.forms, last_seen=excluded.last_seen""",
                 (result["lemma"], context, json.dumps(context_forms, ensure_ascii=False), now, now, source))
+            if parts:
+                db.execute("INSERT OR IGNORE INTO occurrences(lemma,text,slot) VALUES(?,?,?)",
+                           (result["lemma"], context, context_notes.slot_for(parts)))
         db.commit()
         items = records(db, root)
         db.close()
@@ -363,7 +383,7 @@ def serve(root=ROOT):
         try:
             result = collect(request["term"], root, request.get("source", ""),
                              context=request.get("context", ""), lemma_hint=request.get("lemma_hint", ""),
-                             requested_ns=request["requested_ns"])
+                             requested_ns=request["requested_ns"], parts=request.get("parts"))
             emit(dict(result, id=request["id"], event="saved"))
         except Exception as error:
             emit({"id": request["id"], "event": "saved", "error": str(error), "saved": False})
@@ -399,6 +419,8 @@ def serve(root=ROOT):
                     latest_scan = request["id"]
                     scanner.submit(scan, request)
                     continue
+                if request.get("action", "lookup") != "lookup":
+                    raise ValueError("不支持的查词操作。")
                 request["requested_ns"] = time.time_ns()
                 result = dictionary_lookup(request["term"], lemma_hint=request.get("lemma_hint", ""))
                 emit(dict(result, id=request["id"], event="result"))

@@ -2,7 +2,18 @@ import Foundation
 import Combine
 import CryptoKit
 
+struct ContextNote: Codable {
+    var meaning: String
+    let translation: String
+    let nuance: String
+}
+struct Occurrence: Decodable {
+    let parts: [Int]
+    let note: ContextNote?
+}
+
 struct WordContext: Decodable {
+    let occurrences: [Occurrence]?
     let text: String
     let forms: [String]?
     let first_seen: String?
@@ -29,6 +40,7 @@ struct BookWord: Decodable, Identifiable {
 struct Passage: Identifiable {
     let text: String
     var words: [String: [String]]
+    var positions: [String: [Occurrence]] = [:]
     var added: String
     var id: String { text }
 }
@@ -134,6 +146,7 @@ struct BookIndex {
                 let added = context.first_seen ?? context.last_seen ?? word.first_seen ?? word.last_seen ?? ""
                 var group = groups[context.text] ?? Passage(text: context.text, words: [:], added: added)
                 group.words[word.lemma] = context.forms ?? [word.lemma]
+                group.positions[word.lemma] = context.occurrences
                 group.added = min(group.added, added)
                 groups[context.text] = group
             }

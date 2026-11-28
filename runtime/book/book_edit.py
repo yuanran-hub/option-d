@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import backend
+import context_notes
 
 
 def remove(db, lemma, token):
@@ -18,10 +19,13 @@ def remove(db, lemma, token):
     if not entry:
         raise ValueError("这个词已从生词本删除。")
     contexts = db.execute("SELECT * FROM contexts WHERE lemma=?", (lemma,)).fetchall()
-    payload = json.dumps({"entry": dict(entry), "contexts": [dict(c) for c in contexts]}, ensure_ascii=False)
+    positions = db.execute("SELECT * FROM occurrences WHERE lemma=?", (lemma,)).fetchall()
+    payload = json.dumps({"entry": dict(entry), "contexts": [dict(c) for c in contexts],
+                          "occurrences": [dict(r) for r in positions]}, ensure_ascii=False)
     # Keep one undo across window closes. The small cutoffs still protect earlier queued writes.
     db.execute("UPDATE book_deletions SET payload=NULL,token=NULL WHERE token IS NOT NULL")
     db.execute("INSERT OR REPLACE INTO book_deletions VALUES (?,?,?,?)", (lemma, time.time_ns(), token, payload))
+    db.execute("DELETE FROM occurrences WHERE lemma=?", (lemma,))
     db.execute("DELETE FROM contexts WHERE lemma=?", (lemma,))
     db.execute("DELETE FROM entries WHERE lemma=?", (lemma,))
 
@@ -52,10 +56,13 @@ def restore(db, lemma, token):
             VALUES (:lemma,:text,:forms,:first_seen,:last_seen,:source)
             ON CONFLICT(lemma,text) DO UPDATE SET forms=combined_forms(excluded.forms,contexts.forms),
             first_seen=min(contexts.first_seen,excluded.first_seen),last_seen=max(contexts.last_seen,excluded.last_seen)""", context)
+    for item in deleted.get("occurrences", []):
+        db.execute("""INSERT INTO occurrences VALUES(:lemma,:text,:slot,:note)
+            ON CONFLICT(lemma,text,slot) DO UPDATE SET note=coalesce(occurrences.note,excluded.note)""", item)
     db.execute("UPDATE book_deletions SET payload=NULL WHERE lemma=?", (lemma,))
 
 
-def edit(root, action, lemma, token):
+def edit(root, action, lemma, token, change=None):
     folder = root / "Reading/.查词数据"
     with (folder / "writer.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -65,6 +72,14 @@ def edit(root, action, lemma, token):
                     remove(db, lemma, token)
                 elif action == "undo":
                     restore(db, lemma, token)
+                elif action == "sense_edit":
+                    slot = context_notes.slot_for(change["parts"])
+                    current = context_notes.read(db, lemma, change["context"], slot, time.time_ns())
+                    if current != change["previous"]:
+                        raise ValueError("这条解释已更新，请重新打开后编辑。")
+                    updated = context_notes.clean_note(change["note"])
+                    db.execute("UPDATE occurrences SET note=? WHERE lemma=? AND text=? AND slot=?",
+                               (json.dumps(updated, ensure_ascii=False), lemma, change["context"], slot))
                 elif action != "sync":
                     raise ValueError("未知操作。")
             result = {"changed": action != "sync"}
@@ -79,7 +94,8 @@ def edit(root, action, lemma, token):
 
 if __name__ == "__main__":
     try:
-        print(json.dumps(edit(Path(sys.argv[1]), *sys.argv[2:]), ensure_ascii=False))
+        change = json.load(sys.stdin) if sys.argv[2] == "sense_edit" else None
+        print(json.dumps(edit(Path(sys.argv[1]), *sys.argv[2:], change=change), ensure_ascii=False))
     except Exception as error:
         print(str(error), file=sys.stderr)
         sys.exit(1)

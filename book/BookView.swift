@@ -14,7 +14,7 @@ private func normalizedForm(_ text: String) -> String {
         .replacingOccurrences(of: "‐", with: "-").replacingOccurrences(of: "‑", with: "-")
 }
 
-func markedText(_ text: String, forms: [String: [String]], selected: String?, links: Bool) -> AttributedString {
+func markedText(_ text: String, forms: [String: [String]], selected: String?, links: Bool, positions: [String: [Occurrence]] = [:]) -> AttributedString {
     var owners: [String: String] = [:]
     for lemma in forms.keys.sorted() {
         for form in forms[lemma] ?? [] { owners[normalizedForm(form)] = lemma }
@@ -24,6 +24,15 @@ func markedText(_ text: String, forms: [String: [String]], selected: String?, li
     }
     let source = text as NSString
     let matches = tokenRE.matches(in: text, range: NSRange(location: 0, length: source.length))
+    // A clicked position takes precedence over a spelling that also appears elsewhere.
+    for (lemma, occurrences) in positions {
+        for occurrence in occurrences {
+            let spelling = occurrence.parts.compactMap { i in
+                matches.indices.contains(i) ? normalizedForm(source.substring(with: matches[i].range)) : nil
+            }.joined(separator: " ")
+            if owners[spelling] == lemma { owners.removeValue(forKey: spelling) }
+        }
+    }
     var labels = Array<String?>(repeating: nil, count: matches.count)
     let lengths = Set(owners.keys.map { $0.split(separator: " ").count }).sorted()
     for length in lengths where length > 0 && length <= matches.count {
@@ -32,6 +41,11 @@ func markedText(_ text: String, forms: [String: [String]], selected: String?, li
             let spelling = normalizedForm(source.substring(with: range)).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
             guard let lemma = owners[spelling] else { continue }
             for j in i..<(i + length) where selected == nil || labels[j] != selected { labels[j] = lemma }
+        }
+    }
+    for lemma in positions.keys.sorted(by: { a,b in a == selected ? false : (b == selected || a < b) }) {
+        for occurrence in positions[lemma] ?? [] {
+            for i in occurrence.parts where labels.indices.contains(i) { labels[i] = lemma }
         }
     }
     var result = AttributedString()
@@ -343,8 +357,9 @@ struct BookView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             SectionLabel(text: "阅读原文")
                             ForEach(contexts, id: \.text) { c in
-                                PassageCard(text: markedText(c.text, forms: [id: c.forms ?? [id]], selected: id, links: false),
+                                PassageCard(text: markedText(c.text, forms: [id: c.forms ?? [id]], selected: id, links: false, positions: [id: c.occurrences ?? []]),
                                             action: { openPassage(c.text, lemma: id) })
+                                if controls.showsMeaning { readingNotes(c, lemma: id) }
                             }
                         }
                     } else if let example = word.example {
@@ -364,7 +379,7 @@ struct BookView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     SectionLabel(text: "阅读原文")
-                    PassageCard(text: markedText(passage.text, forms: passage.words, selected: passageWord, links: true))
+                    PassageCard(text: markedText(passage.text, forms: passage.words, selected: passageWord, links: true, positions: passage.positions))
                         .environment(\.openURL, OpenURLAction { url in
                             guard url.scheme == "readingbook",
                                   let lemma = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.value,
@@ -378,7 +393,12 @@ struct BookView: View {
                     if let id = passageWord, let word = store.index.byWord[id] {
                         Divider()
                         WordHeading(word: word)
-                        if controls.showsMeaning { Definition(word: word) }
+                        if controls.showsMeaning {
+                            Definition(word: word)
+                            if let context = word.contexts?.first(where: { $0.text == passage.text }) {
+                                readingNotes(context, lemma: id)
+                            }
+                        }
                         Button("查看这个词的全部原文") { openWord(id) }.buttonStyle(.link)
                     }
                 }.padding(30).frame(maxWidth: 850, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
@@ -392,6 +412,76 @@ struct BookView: View {
         } else {
             ContentUnavailableView(mode == .words ? "生词本还是空的" : "尚未收录原文", systemImage: "book",
                                    description: Text(mode == .words ? "复制英文后按 ⌥D，查过的词会出现在这里。" : "复制一段英文后按 ⌥D，再点选其中的词。"))
+        }
+    }
+
+    @ViewBuilder private func readingNotes(_ context: WordContext, lemma: String) -> some View {
+        let items = (context.occurrences ?? []).filter { $0.note != nil }
+        ForEach(Array(items.enumerated()), id: \.offset) { index, occurrence in
+            if let note = occurrence.note {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text(items.count == 1 ? "这句里" : "这句里 · 第 \(index + 1) 处")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button { editReadingNote(context, lemma, occurrence, note) } label: {
+                            Image(systemName: "pencil")
+                        }.buttonStyle(.plain).help("修改句中义")
+                    }
+                    Text(note.meaning).textSelection(.enabled)
+                    if !note.nuance.isEmpty { Text(note.nuance).foregroundStyle(.secondary) }
+                    if !note.translation.isEmpty {
+                        DisclosureGroup("整句译文") { Text(note.translation).textSelection(.enabled) }
+                            .font(.callout)
+                    }
+                }
+            }
+        }
+    }
+
+    private func editReadingNote(_ context: WordContext, _ lemma: String, _ occurrence: Occurrence, _ note: ContextNote) {
+        guard let window = NSApp.keyWindow else { return }
+        let alert = NSAlert()
+        alert.messageText = "修改句中义"
+        let field = NSTextField(string: note.meaning)
+        field.frame = NSRect(x: 0, y: 0, width: 360, height: 64)
+        field.cell?.wraps = true
+        field.cell?.isScrollable = false
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        let root = store.location.root
+        alert.beginSheetModal(for: window) { response in
+            let meaning = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard response == .alertFirstButtonReturn, !meaning.isEmpty else { return }
+            var updated = note
+            updated.meaning = meaning
+            struct Edit: Encodable {
+                let context: String
+                let parts: [Int]
+                let previous: ContextNote
+                let note: ContextNote
+            }
+            let change = Edit(context: context.text, parts: occurrence.parts, previous: note, note: updated)
+            BookDelegate.beginWrite()
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let result = try BookTools.run("book_edit.py", [root.path, "sense_edit", lemma, ""],
+                                                   input: try JSONEncoder().encode(change))
+                    let status = try JSONDecoder().decode(EditResult.self, from: result)
+                    DispatchQueue.main.async {
+                        if let warning = status.warning { notice = BookNotice(title: "导出待更新", detail: warning, retrySync: true) }
+                        store.refresh()
+                        BookDelegate.endWrite()
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        notice = BookNotice(title: "句中义未保存", detail: error.localizedDescription)
+                        store.refresh()
+                        BookDelegate.endWrite()
+                    }
+                }
+            }
         }
     }
 
@@ -587,7 +677,7 @@ struct BookView: View {
 }
 
 enum BookTools {
-    static func run(_ script: String, _ arguments: [String]) throws -> Data {
+    static func run(_ script: String, _ arguments: [String], input: Data? = nil) throws -> Data {
         let resources = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Resources")
         let task = pythonProcess(resources: resources)
@@ -595,7 +685,13 @@ enum BookTools {
         let output = Pipe()
         task.standardOutput = output
         task.standardError = output
+        let stdin = Pipe()
+        if input != nil { task.standardInput = stdin }
         try task.run()
+        if let input {
+            try stdin.fileHandleForWriting.write(contentsOf: input)
+            try stdin.fileHandleForWriting.close()
+        }
         let data = output.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit()
         guard task.terminationStatus == 0 else {

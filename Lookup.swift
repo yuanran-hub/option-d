@@ -81,7 +81,8 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
     var meaningHeight: NSLayoutConstraint!
     var contextHeight: NSLayoutConstraint!
     var statusIcon: NSImageView!
-    var markedWord: NSRange?
+    var markedWords: [NSRange] = []
+    var selectedParts: [Int] = []
     var meaning: NSTextView!
     var status: NSTextField!
     var info: NSTextField!
@@ -102,7 +103,12 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
     var scanID = ""
     var phraseRow: NSStackView!
     var online: NSButton!
-    var phraseRanges: [NSRange] = []
+    struct PhraseChoice {
+        let range: NSRange
+        let parts: [Int]?
+        let lemma: String
+    }
+    var phraseRanges: [PhraseChoice] = []
     private let pipeQueue = DispatchQueue(label: "lookup.requests")
     var selectedSurface = ""
     var selectedHint = ""
@@ -146,7 +152,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
                     }
                 }
                 DispatchQueue.main.async {
-                    guard let self else { return }
+                    guard let self, self.worker === process else { return }
                     if !self.pending.isEmpty {
                         self.setStatus("部分词条尚未确认保存，请重新查词", symbol: "exclamationmark.circle")
                     }
@@ -211,9 +217,6 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         NSUpdateDynamicServices()
         setupClipboardShortcut()
         startWorker()
-        if !CommandLine.arguments.contains("-NSServiceMode") {
-            showPanel(term: "", source: "手动查词", performLookup: false)
-        }
     }
 
     func setupClipboardShortcut() {
@@ -532,7 +535,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         var bodyHeight: CGFloat = 0
         for (index, view) in visible.enumerated() {
             if view === contextCard { bodyHeight += contextHeight.constant }
-            else if view === phraseRow { bodyHeight += max(24, phraseRow.fittingSize.height) }
+            else if view === phraseRow { bodyHeight += max(24, view.fittingSize.height) }
             else if view === meaningScroll { bodyHeight += meaningHeight.constant }
             else { bodyHeight += view.intrinsicContentSize.height }
             if index + 1 < visible.count {
@@ -593,7 +596,8 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         phraseRanges = []
         copiedContext = ""
         lookupSource = source
-        markedWord = nil
+        markedWords = []
+        selectedParts = []
         input?.stringValue = ""
         for view in bodyStack.arrangedSubviews { view.isHidden = true }
     }
@@ -646,12 +650,13 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         phraseRanges = choices.compactMap { item in
             guard let first = item["first"] as? Int, let last = item["last"] as? Int,
                   tokenRanges.indices.contains(first), tokenRanges.indices.contains(last), first <= last else { return nil }
-            return NSUnionRange(tokenRanges[first], tokenRanges[last])
+            return PhraseChoice(range: NSUnionRange(tokenRanges[first], tokenRanges[last]),
+                                parts: item["parts"] as? [Int], lemma: item["lemma"] as? String ?? "")
         }
         guard !phraseRanges.isEmpty else { return }
         let source = copiedContext as NSString
         if result["exact"] as? Bool == true, currentRequest.isEmpty {
-            let term = source.substring(with: phraseRanges[0])
+            let term = source.substring(with: phraseRanges[0].range)
             copiedContext = ""
             contextCard.isHidden = true
             perform(term: term, source: lookupSource)
@@ -663,7 +668,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         label.font = .systemFont(ofSize: 12)
         label.textColor = .secondaryLabelColor
         phraseRow.addView(label, in: .leading)
-        let names = phraseRanges.map { source.substring(with: $0).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ") }
+        let names = phraseRanges.map { $0.parts == nil ? source.substring(with: $0.range).split(whereSeparator: { $0.isWhitespace }).joined(separator: " ") : $0.lemma }
         let font = NSFont.systemFont(ofSize: 12)
         var remaining = max(1, bodyStack.bounds.width - 110)
         var shown = 0
@@ -702,7 +707,10 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
 
     @objc private func choosePhrase(_ sender: AnyObject) {
         let index = (sender as? NSControl)?.tag ?? (sender as? NSMenuItem)?.tag ?? -1
-        if phraseRanges.indices.contains(index) { selectPassage(phraseRanges[index]) }
+        if phraseRanges.indices.contains(index) {
+            let choice = phraseRanges[index]
+            selectPassage(choice.range, parts: choice.parts)
+        }
     }
 
     @objc private func searchOnline() {
@@ -711,29 +719,34 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         if let target = url.url { NSWorkspace.shared.open(target) }
     }
 
-    private func selectPassage(_ selection: NSRange) {
-        let tokens = tokenRanges.filter { NSIntersectionRange($0, selection).length > 0 }
+    private func selectPassage(_ selection: NSRange, parts: [Int]? = nil) {
+        let indices = parts ?? tokenRanges.indices.filter { NSIntersectionRange(tokenRanges[$0], selection).length > 0 }
+        guard indices.allSatisfy(tokenRanges.indices.contains) else { return }
+        let tokens = indices.map { tokenRanges[$0] }
         guard let first = tokens.first, let last = tokens.last else { return }
         let range = NSUnionRange(first, last)
         let surface = (copiedContext as NSString).substring(with: range)
-        if tokens.count > 1 {
+        if tokens.count > 1 && parts == nil {
             let rest = Self.tokenPattern.stringByReplacingMatches(in: surface, range: NSRange(location: 0, length: (surface as NSString).length), withTemplate: "")
             guard tokens.count <= 16 && rest.allSatisfy({ $0.isWhitespace }) else {
                 setStatus("请选择一段连续的英文短语", symbol: "text.cursor")
                 return
             }
         }
-        if let previous = markedWord {
+        for previous in markedWords {
             contextView.textStorage?.addAttribute(.font, value: passageFont, range: previous)
             contextView.textStorage?.addAttribute(.foregroundColor, value: NSColor.labelColor, range: previous)
         }
-        markedWord = range
-        contextView.textStorage?.addAttributes([
-            .foregroundColor: NSColor.controlAccentColor,
-            .font: NSFontManager.shared.convert(passageFont, toHaveTrait: .boldFontMask)
-        ], range: range)
+        selectedParts = indices
+        markedWords = parts == nil ? [range] : tokens
+        for mark in markedWords {
+            contextView.textStorage?.addAttributes([
+                .foregroundColor: NSColor.controlAccentColor,
+                .font: NSFontManager.shared.convert(passageFont, toHaveTrait: .boldFontMask)
+            ], range: mark)
+        }
         contextView.setSelectedRange(NSRange(location: range.location, length: 0))
-        let word = (copiedContext as NSString).substring(with: range)
+        let word = tokens.map { (copiedContext as NSString).substring(with: $0) }.joined(separator: " ")
         var hint = ""
         if tokens.count == 1, let swiftRange = Range(range, in: copiedContext) {
             let tagger = NLTagger(tagSchemes: [.lemma, .lexicalClass])
@@ -764,7 +777,7 @@ final class LookupProvider: NSObject, NSApplicationDelegate, NSWindowDelegate, N
         selectedHint = hint
         let id = UUID().uuidString
         currentRequest = id
-        let request: [String: Any] = ["id": id, "term": term, "source": source, "context": copiedContext, "lemma_hint": hint]
+        let request: [String: Any] = ["id": id, "term": term, "source": source, "context": copiedContext, "lemma_hint": hint, "parts": selectedParts]
         pending[id] = request
         send(request)
     }
